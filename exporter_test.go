@@ -35,7 +35,8 @@ func TestExporter_Do(t *testing.T) {
 				"project": os.Getenv("ES_PROJECT"),
 			},
 		},
-		Batch: batch,
+		Batch:       batch,
+		DebugLogger: t.Logf,
 	}, handler)
 
 	if err := e.Do(context.Background()); err != nil {

@@ -21,12 +21,13 @@ var (
 type DocumentHandler func(buf []byte, idx int64, total int64) error
 
 type Options struct {
-	Host   string
-	Index  string
-	Type   string
-	Scroll string
-	Query  interface{}
-	Batch  int64
+	Host        string
+	Index       string
+	Type        string
+	Scroll      string
+	Query       interface{}
+	Batch       int64
+	DebugLogger func(layout string, items ...interface{})
 }
 
 type Exporter interface {
@@ -44,6 +45,7 @@ type exporter struct {
 }
 
 func (e *exporter) buildRequest(ctx context.Context, method string, uri string, body interface{}) (req *http.Request, err error) {
+	e.DebugLogger("exporter#buildRequest(%s, %s)", method, uri)
 	var br io.Reader
 	if body != nil {
 		var buf []byte
@@ -74,6 +76,7 @@ func (e *exporter) buildFirstURL() string {
 }
 
 func (e *exporter) buildFirstRequest(ctx context.Context) (req *http.Request, err error) {
+	e.DebugLogger("exporter#buildFirstRequest()")
 	if req, err = e.buildRequest(ctx, http.MethodPost, e.buildFirstURL(), map[string]interface{}{
 		"size":  e.Batch,
 		"query": e.Query,
@@ -95,6 +98,7 @@ func (e *exporter) buildNextURL() string {
 }
 
 func (e *exporter) buildNextRequest(ctx context.Context) (req *http.Request, err error) {
+	e.DebugLogger("exporter#buildNextRequest()")
 	if req, err = e.buildRequest(ctx, http.MethodPost, e.buildFirstURL(), map[string]interface{}{
 		"scroll":    e.Scroll,
 		"scroll_id": e.scrollID,
@@ -105,6 +109,7 @@ func (e *exporter) buildNextRequest(ctx context.Context) (req *http.Request, err
 }
 
 func (e *exporter) doRequest(req *http.Request) (err error) {
+	e.DebugLogger("exporter#doRequest(%s)", req.URL.String())
 	var res *http.Response
 	if res, err = e.client.Do(req); err != nil {
 		return
@@ -194,6 +199,7 @@ func (e *exporter) doRequest(req *http.Request) (err error) {
 }
 
 func (e *exporter) Do(ctx context.Context) (err error) {
+	e.DebugLogger("exporter#Do()")
 	var req *http.Request
 	if req, err = e.buildFirstRequest(ctx); err != nil {
 		return
@@ -226,6 +232,9 @@ func New(opts Options, handler DocumentHandler) Exporter {
 	}
 	if opts.Batch == 0 {
 		opts.Batch = 5000
+	}
+	if opts.DebugLogger == nil {
+		opts.DebugLogger = func(layout string, items ...interface{}) {}
 	}
 	if handler == nil {
 		handler = func(buf []byte, idx int64, total int64) error { return nil }
