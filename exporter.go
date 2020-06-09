@@ -100,7 +100,7 @@ func (e *exporter) buildNextURL() string {
 
 func (e *exporter) buildNextRequest(ctx context.Context) (req *http.Request, err error) {
 	e.DebugLogger("exporter#buildNextRequest()")
-	if req, err = e.buildRequest(ctx, http.MethodPost, e.buildFirstURL(), map[string]interface{}{
+	if req, err = e.buildRequest(ctx, http.MethodPost, e.buildNextURL(), map[string]interface{}{
 		"scroll":    e.Scroll,
 		"scroll_id": e.scrollID,
 	}); err != nil {
