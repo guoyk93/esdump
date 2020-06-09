@@ -20,6 +20,7 @@ func TestExporter_Do(t *testing.T) {
 		if max > 0 && id >= max {
 			return ErrUserCancelled
 		}
+		log.Printf("%s", buf)
 		prg.SetTotal(total)
 		prg.SetCount(id)
 		maxId = id
