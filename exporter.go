@@ -19,7 +19,7 @@ var (
 	ErrUserCancelled = errors.New("user cancelled")
 )
 
-type DocumentHandler func(buf []byte, idx int64, total int64) error
+type DocumentHandler func(buf []byte, id int64, total int64) error
 
 type Options struct {
 	Host        string

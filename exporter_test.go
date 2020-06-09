@@ -11,16 +11,17 @@ import (
 func TestExporter_Do(t *testing.T) {
 	max, _ := strconv.ParseInt(os.Getenv("ES_MAX"), 10, 64)
 	batch, _ := strconv.ParseInt(os.Getenv("ES_BATCH"), 10, 64)
-	var totalCount, totalSize int64
+	var totalCount, totalSize, maxId int64
 
 	prg := logutil.NewProgress(logutil.LoggerFunc(t.Logf), "test")
 
-	handler := DocumentHandler(func(buf []byte, idx int64, total int64) error {
-		if max >= 0 && idx >= max {
+	handler := DocumentHandler(func(buf []byte, id int64, total int64) error {
+		if max >= 0 && id >= max {
 			return ErrUserCancelled
 		}
 		prg.SetTotal(total)
-		prg.SetCount(idx)
+		prg.SetCount(id)
+		maxId = id
 		totalCount = total
 		totalSize += int64(len(buf))
 		return nil
@@ -43,6 +44,7 @@ func TestExporter_Do(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	t.Logf("max id: %d", maxId)
 	t.Logf("total count: %d", totalCount)
 	t.Logf("total raw size: %dmb", totalSize/1024/1024)
 }
