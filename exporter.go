@@ -26,7 +26,7 @@ type Options struct {
 	Type   string
 	Scroll string
 	Query  interface{}
-	Batch  int
+	Batch  int64
 }
 
 type Exporter interface {
@@ -77,7 +77,7 @@ func (e *exporter) buildFirstRequest(ctx context.Context) (req *http.Request, er
 	if req, err = e.buildRequest(ctx, http.MethodPost, e.buildFirstURL(), map[string]interface{}{
 		"size":  e.Batch,
 		"query": e.Query,
-		// optimization option, see https://www.elastic.co/guide/en/elasticsearch/reference/6.3/search-request-scroll.html
+		// optimization, see https://www.elastic.co/guide/en/elasticsearch/reference/6.3/search-request-scroll.html
 		"sort": []string{"_doc"},
 	}); err != nil {
 		return

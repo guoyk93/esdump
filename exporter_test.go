@@ -10,6 +10,7 @@ import (
 
 func TestExporter_Do(t *testing.T) {
 	max, _ := strconv.ParseInt(os.Getenv("ES_MAX"), 10, 64)
+	batch, _ := strconv.ParseInt(os.Getenv("ES_BATCH"), 10, 64)
 	var totalCount, totalSize int64
 
 	prg := logutil.NewProgress(logutil.LoggerFunc(t.Logf), "test")
@@ -34,6 +35,7 @@ func TestExporter_Do(t *testing.T) {
 				"project": os.Getenv("ES_PROJECT"),
 			},
 		},
+		Batch: batch,
 	}, handler)
 
 	if err := e.Do(context.Background()); err != nil {
