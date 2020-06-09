@@ -3,6 +3,7 @@ package esexporter
 import (
 	"context"
 	"github.com/guoyk93/logutil"
+	"log"
 	"os"
 	"strconv"
 	"testing"
@@ -13,7 +14,7 @@ func TestExporter_Do(t *testing.T) {
 	batch, _ := strconv.ParseInt(os.Getenv("ES_BATCH"), 10, 64)
 	var totalCount, totalSize int64
 
-	prg := logutil.NewProgress(logutil.LoggerFunc(t.Logf), "test")
+	prg := logutil.NewProgress(logutil.LoggerFunc(log.Printf), "test")
 
 	handler := DocumentHandler(func(buf []byte, idx int64, total int64) error {
 		if max >= 0 && idx >= max {
@@ -36,7 +37,7 @@ func TestExporter_Do(t *testing.T) {
 			},
 		},
 		Batch:       batch,
-		DebugLogger: t.Logf,
+		DebugLogger: log.Printf,
 	}, handler)
 
 	if err := e.Do(context.Background()); err != nil {
