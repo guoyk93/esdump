@@ -8,12 +8,21 @@ dump Elasticsearch documents with streaming JSON decoder, avoid decoding the who
 
 跑了下 CPU Profile 发现，是 olivere/elastic 在请求结果 JSON 解析阶段消耗的时间太多了。
 
-我只需要流式获取 `hits.hits` 中的 `source` 字段，结构化解析不仅慢，还非常消耗内存，因此我打造了这个库。
+我只需要获取 `hits.hits` 中的 `source` 字段，结构化解析不仅慢，还非常消耗内存，因此我打造了这个库。
 
 ## Usage
 
-```text
-// TODO:
+```go
+import (
+ "github.com/guoyk93/esexporter"
+)
+
+
+err := esexporter.New(exexporter.Options{
+    // ...
+}, func (src []byte, id int64, total int64) error {
+    return nil
+}).Do(context.Background())
 ```
 
 ## Credits
