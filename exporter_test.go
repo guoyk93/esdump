@@ -16,7 +16,7 @@ func TestExporter_Do(t *testing.T) {
 	prg := logutil.NewProgress(logutil.LoggerFunc(t.Logf), "test")
 
 	handler := DocumentHandler(func(buf []byte, id int64, total int64) error {
-		if max >= 0 && id >= max {
+		if max > 0 && id >= max {
 			return ErrUserCancelled
 		}
 		prg.SetTotal(total)
