@@ -1,17 +1,14 @@
 package esexporter
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/buger/jsonparser"
+	"github.com/olivere/elastic"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/url"
-	"sync"
 	"sync/atomic"
 )
 
@@ -22,12 +19,12 @@ var (
 type DocumentHandler func(buf []byte, id int64, total int64) error
 
 type Options struct {
-	Host        string
+	Client      *elastic.Client
 	Index       string
 	Type        string
+	Query       elastic.Query
 	Scroll      string
-	Query       interface{}
-	Batch       int64
+	Size        int64
 	DebugLogger func(layout string, items ...interface{})
 }
 
@@ -37,101 +34,54 @@ type Exporter interface {
 
 type exporter struct {
 	Options
-	client   *http.Client
 	scrollID string
 	count    int64
 	total    int64
 	handler  DocumentHandler
-	bufPool  *sync.Pool
 }
 
-func (e *exporter) buildRequest(ctx context.Context, method string, uri string, body interface{}) (req *http.Request, err error) {
-	e.DebugLogger("exporter#buildRequest(%s, %s)", method, uri)
-	var br io.Reader
-	if body != nil {
-		var buf []byte
-		if buf, err = json.Marshal(body); err != nil {
+func (e *exporter) do(ctx context.Context) (err error) {
+	e.DebugLogger("exporter#do()")
+	var res *elastic.Response
+	if e.scrollID == "" {
+		var querySrc interface{}
+		if e.Query != nil {
+			if querySrc, err = e.Query.Source(); err != nil {
+				return
+			}
+		}
+		if res, err = e.Client.PerformRequest(ctx, elastic.PerformRequestOptions{
+			Method: http.MethodPost,
+			Path:   "/" + e.Index + "/" + e.Type + "/_search",
+			Params: url.Values{"scroll": []string{e.Scroll}},
+			Body: map[string]interface{}{
+				"size":  e.Size,
+				"query": querySrc,
+				// optimization, see https://www.elastic.co/guide/en/elasticsearch/reference/6.3/search-request-scroll.html
+				"sort": []string{"_doc"},
+			},
+		}); err != nil {
 			return
 		}
-		br = bytes.NewReader(buf)
+	} else {
+		if res, err = e.Client.PerformRequest(ctx, elastic.PerformRequestOptions{
+			Method: http.MethodPost,
+			Path:   "/_search/scroll",
+			Body: map[string]interface{}{
+				"scroll":    e.Scroll,
+				"scroll_id": e.scrollID,
+			},
+		}); err != nil {
+			return
+		}
 	}
-	if req, err = http.NewRequestWithContext(ctx, method, uri, br); err != nil {
-		return
-	}
-	if br != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	return
-}
 
-func (e *exporter) buildFirstURL() string {
-	q := &url.Values{}
-	q.Set("scroll", e.Scroll)
-	u := &url.URL{
-		Scheme:   "http",
-		Host:     e.Host,
-		Path:     "/" + e.Index + "/" + e.Type + "/_search",
-		RawQuery: q.Encode(),
-	}
-	return u.String()
-}
-
-func (e *exporter) buildFirstRequest(ctx context.Context) (req *http.Request, err error) {
-	e.DebugLogger("exporter#buildFirstRequest()")
-	if req, err = e.buildRequest(ctx, http.MethodPost, e.buildFirstURL(), map[string]interface{}{
-		"size":  e.Batch,
-		"query": e.Query,
-		// optimization, see https://www.elastic.co/guide/en/elasticsearch/reference/6.3/search-request-scroll.html
-		"sort": []string{"_doc"},
-	}); err != nil {
-		return
-	}
-	return
-}
-
-func (e *exporter) buildNextURL() string {
-	u := &url.URL{
-		Scheme: "http",
-		Host:   e.Host,
-		Path:   "/_search/scroll",
-	}
-	return u.String()
-}
-
-func (e *exporter) buildNextRequest(ctx context.Context) (req *http.Request, err error) {
-	e.DebugLogger("exporter#buildNextRequest()")
-	if req, err = e.buildRequest(ctx, http.MethodPost, e.buildNextURL(), map[string]interface{}{
-		"scroll":    e.Scroll,
-		"scroll_id": e.scrollID,
-	}); err != nil {
-		return
-	}
-	return
-}
-
-func (e *exporter) doRequest(req *http.Request) (err error) {
-	e.DebugLogger("exporter#doRequest(%s)", req.URL.String())
-	var res *http.Response
-	if res, err = e.client.Do(req); err != nil {
-		return
-	}
-	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		body, _ := ioutil.ReadAll(res.Body)
-		err = fmt.Errorf("http request failed: %d: %s", res.StatusCode, body)
-		_ = res.Body.Close()
+		err = fmt.Errorf("http request failed: %d: %s", res.StatusCode, res.Body)
 		return
 	}
 
-	buffer := e.bufPool.Get().(*bytes.Buffer)
-	defer e.bufPool.Put(buffer)
-	defer buffer.Reset()
-
-	if _, err = io.Copy(buffer, res.Body); err != nil {
-		return
-	}
-
-	buf := buffer.Bytes()
+	buf := res.Body
 
 	// update scroll_id
 	if e.scrollID, err = jsonparser.GetString(buf, "_scroll_id"); err != nil {
@@ -202,21 +152,8 @@ func (e *exporter) doRequest(req *http.Request) (err error) {
 
 func (e *exporter) Do(ctx context.Context) (err error) {
 	e.DebugLogger("exporter#Do()")
-	var req *http.Request
-	if req, err = e.buildFirstRequest(ctx); err != nil {
-		return
-	}
-	if err = e.doRequest(req); err != nil {
-		if err == ErrUserCancelled || err == io.EOF {
-			err = nil
-		}
-		return
-	}
 	for {
-		if req, err = e.buildNextRequest(ctx); err != nil {
-			return
-		}
-		if err = e.doRequest(req); err != nil {
+		if err = e.do(ctx); err != nil {
 			if err == ErrUserCancelled || err == io.EOF {
 				err = nil
 			}
@@ -232,8 +169,8 @@ func New(opts Options, handler DocumentHandler) Exporter {
 	if opts.Scroll == "" {
 		opts.Scroll = "1m"
 	}
-	if opts.Batch == 0 {
-		opts.Batch = 5000
+	if opts.Size == 0 {
+		opts.Size = 5000
 	}
 	if opts.DebugLogger == nil {
 		opts.DebugLogger = func(layout string, items ...interface{}) {}
@@ -243,12 +180,6 @@ func New(opts Options, handler DocumentHandler) Exporter {
 	}
 	return &exporter{
 		Options: opts,
-		client:  &http.Client{},
 		handler: handler,
-		bufPool: &sync.Pool{
-			New: func() interface{} {
-				return &bytes.Buffer{}
-			},
-		},
 	}
 }

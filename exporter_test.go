@@ -3,6 +3,7 @@ package esexporter
 import (
 	"context"
 	"github.com/guoyk93/logutil"
+	"github.com/olivere/elastic"
 	"log"
 	"os"
 	"strconv"
@@ -29,16 +30,17 @@ func TestExporter_Do(t *testing.T) {
 		return nil
 	})
 
+	client, err := elastic.NewClient(elastic.SetURL(os.Getenv("ES_URL")))
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	e := New(Options{
-		Host:  os.Getenv("ES_HOST"),
-		Index: os.Getenv("ES_INDEX"),
-		Type:  os.Getenv("ES_TYPE"),
-		Query: map[string]interface{}{
-			"term": map[string]interface{}{
-				"project": os.Getenv("ES_PROJECT"),
-			},
-		},
-		Batch:       batch,
+		Client:      client,
+		Index:       os.Getenv("ES_INDEX"),
+		Type:        os.Getenv("ES_TYPE"),
+		Query:       elastic.NewTermQuery("project", os.Getenv("ES_PROJECT")),
+		Size:        batch,
 		DebugLogger: log.Printf,
 	}, handler)
 
