@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/buger/jsonparser"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"sync"
@@ -116,7 +117,8 @@ func (e *exporter) doRequest(req *http.Request) (err error) {
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		err = fmt.Errorf("http request failed: %d", res.StatusCode)
+		body, _ := ioutil.ReadAll(res.Body)
+		err = fmt.Errorf("http request failed: %d: %s", res.StatusCode, body)
 		_ = res.Body.Close()
 		return
 	}
