@@ -9,23 +9,20 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"sync/atomic"
 )
 
 var (
 	ErrUserCancelled = errors.New("user cancelled")
 )
 
-type DocumentHandler func(buf []byte, id int64, total int64) error
+type SourceHandler func(buf []byte, id int64, total int64) error
 
 type Options struct {
-	Client      *elastic.Client
-	Index       string
-	Type        string
-	Query       elastic.Query
-	Scroll      string
-	Size        int64
-	DebugLogger func(layout string, items ...interface{})
+	Index  string
+	Type   string
+	Query  elastic.Query
+	Scroll string
+	Size   int64
 }
 
 type Exporter interface {
@@ -34,14 +31,16 @@ type Exporter interface {
 
 type exporter struct {
 	Options
+
+	client  *elastic.Client
+	handler SourceHandler
+
 	scrollID string
-	count    int64
-	total    int64
-	handler  DocumentHandler
+
+	cursor int64
 }
 
 func (e *exporter) do(ctx context.Context) (err error) {
-	e.DebugLogger("exporter#do()")
 	var res *elastic.Response
 	if e.scrollID == "" {
 		var querySrc interface{}
@@ -50,7 +49,7 @@ func (e *exporter) do(ctx context.Context) (err error) {
 				return
 			}
 		}
-		if res, err = e.Client.PerformRequest(ctx, elastic.PerformRequestOptions{
+		if res, err = e.client.PerformRequest(ctx, elastic.PerformRequestOptions{
 			Method: http.MethodPost,
 			Path:   "/" + e.Index + "/" + e.Type + "/_search",
 			Params: url.Values{"scroll": []string{e.Scroll}},
@@ -64,7 +63,7 @@ func (e *exporter) do(ctx context.Context) (err error) {
 			return
 		}
 	} else {
-		if res, err = e.Client.PerformRequest(ctx, elastic.PerformRequestOptions{
+		if res, err = e.client.PerformRequest(ctx, elastic.PerformRequestOptions{
 			Method: http.MethodPost,
 			Path:   "/_search/scroll",
 			Body: map[string]interface{}{
@@ -99,7 +98,8 @@ func (e *exporter) do(ctx context.Context) (err error) {
 	}
 
 	// check total
-	if e.total, err = jsonparser.GetInt(buf, "hits", "total"); err != nil {
+	var total int64
+	if total, err = jsonparser.GetInt(buf, "hits", "total"); err != nil {
 		return
 	}
 
@@ -116,10 +116,14 @@ func (e *exporter) do(ctx context.Context) (err error) {
 
 	// iterate hits.hits
 	var itErr error
-	var itCount int64
-	_, _ = jsonparser.ArrayEach(hitsBuf, func(value []byte, dataType jsonparser.ValueType, offset int, err error) {
-		itCount++
+	var itCalled bool
+	_, _ = jsonparser.ArrayEach(hitsBuf, func(value []byte, dataType jsonparser.ValueType, offset int, docErr error) {
+		itCalled = true
 		if itErr != nil {
+			return
+		}
+		if docErr != nil {
+			itErr = docErr
 			return
 		}
 		srcBuf, srcType, _, srcErr := jsonparser.Get(value, "_source")
@@ -131,10 +135,10 @@ func (e *exporter) do(ctx context.Context) (err error) {
 			itErr = errors.New("missing _source in hits.hits")
 			return
 		}
-		if itErr = e.handler(srcBuf, e.count, e.total); err != nil {
+		if itErr = e.handler(srcBuf, e.cursor, total); itErr != nil {
 			return
 		}
-		atomic.AddInt64(&e.count, 1)
+		e.cursor = e.cursor + 1
 	})
 
 	if itErr != nil {
@@ -142,7 +146,7 @@ func (e *exporter) do(ctx context.Context) (err error) {
 		return
 	}
 
-	if itCount == 0 {
+	if !itCalled {
 		err = io.EOF
 		return
 	}
@@ -151,7 +155,6 @@ func (e *exporter) do(ctx context.Context) (err error) {
 }
 
 func (e *exporter) Do(ctx context.Context) (err error) {
-	e.DebugLogger("exporter#Do()")
 	for {
 		if err = e.do(ctx); err != nil {
 			if err == ErrUserCancelled || err == io.EOF {
@@ -162,7 +165,7 @@ func (e *exporter) Do(ctx context.Context) (err error) {
 	}
 }
 
-func New(opts Options, handler DocumentHandler) Exporter {
+func New(client *elastic.Client, opts Options, handler SourceHandler) Exporter {
 	if opts.Type == "" {
 		opts.Type = "_doc"
 	}
@@ -172,14 +175,12 @@ func New(opts Options, handler DocumentHandler) Exporter {
 	if opts.Size == 0 {
 		opts.Size = 5000
 	}
-	if opts.DebugLogger == nil {
-		opts.DebugLogger = func(layout string, items ...interface{}) {}
-	}
 	if handler == nil {
 		handler = func(buf []byte, idx int64, total int64) error { return nil }
 	}
 	return &exporter{
 		Options: opts,
+		client:  client,
 		handler: handler,
 	}
 }

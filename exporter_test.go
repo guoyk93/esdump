@@ -17,7 +17,7 @@ func TestExporter_Do(t *testing.T) {
 
 	prg := logutil.NewProgress(logutil.LoggerFunc(log.Printf), "test")
 
-	handler := DocumentHandler(func(buf []byte, id int64, total int64) error {
+	handler := SourceHandler(func(buf []byte, id int64, total int64) error {
 		if max > 0 && id >= max {
 			return ErrUserCancelled
 		}
@@ -35,13 +35,11 @@ func TestExporter_Do(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e := New(Options{
-		Client:      client,
-		Index:       os.Getenv("ES_INDEX"),
-		Type:        os.Getenv("ES_TYPE"),
-		Query:       elastic.NewTermQuery("project", os.Getenv("ES_PROJECT")),
-		Size:        batch,
-		DebugLogger: log.Printf,
+	e := New(client, Options{
+		Index: os.Getenv("ES_INDEX"),
+		Type:  os.Getenv("ES_TYPE"),
+		Query: elastic.NewTermQuery("project", os.Getenv("ES_PROJECT")),
+		Size:  batch,
 	}, handler)
 
 	if err := e.Do(context.Background()); err != nil {
