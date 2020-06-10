@@ -17,10 +17,10 @@ import (
  "github.com/guoyk93/esexporter"
 )
 
-
-err := esexporter.New(exexporter.Options{
+err := esexporter.New(client,exexporter.Options{
     // ...
-}, func (src []byte, id int64, total int64) error {
+}, func (src []byte, cursor int64, total int64) error {
+    // ...
     return nil
 }).Do(context.Background())
 ```
