@@ -40,6 +40,23 @@ type exporter struct {
 	cursor int64
 }
 
+func (e *exporter) deleteScrollID() (err error) {
+	scrollID := e.scrollID
+	if scrollID == "" {
+		return
+	}
+	if _, err = e.client.PerformRequest(context.Background(), elastic.PerformRequestOptions{
+		Method: http.MethodDelete,
+		Path:   "/_search/scroll",
+		Body: map[string]interface{}{
+			"scroll_id": scrollID,
+		},
+	}); err != nil {
+		return
+	}
+	return
+}
+
 func (e *exporter) do(ctx context.Context) (err error) {
 	var res *elastic.Response
 	if e.scrollID == "" {
@@ -155,6 +172,7 @@ func (e *exporter) do(ctx context.Context) (err error) {
 }
 
 func (e *exporter) Do(ctx context.Context) (err error) {
+	defer e.deleteScrollID()
 	for {
 		if err = e.do(ctx); err != nil {
 			if err == ErrUserCancelled || err == io.EOF {
