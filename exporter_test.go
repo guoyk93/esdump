@@ -36,16 +36,17 @@ func TestExporter_Do(t *testing.T) {
 	}
 
 	e := New(client, Options{
-		Index: os.Getenv("ES_INDEX"),
-		Type:  os.Getenv("ES_TYPE"),
-		Query: elastic.NewTermQuery("project", os.Getenv("ES_PROJECT")),
-		Size:  batch,
+		Index:         os.Getenv("ES_INDEX"),
+		Type:          os.Getenv("ES_TYPE"),
+		Query:         elastic.NewTermQuery("project", os.Getenv("ES_PROJECT")),
+		BatchByteSize: batch,
 	}, handler)
 
 	if err := e.Do(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
+	log.Printf("batch size: %d", e.(*exporter).size)
 	log.Printf("max id: %d", maxId)
 	log.Printf("total count: %d", totalCount)
 	log.Printf("total raw size: %dmb", totalSize/1024/1024)

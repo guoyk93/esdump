@@ -18,11 +18,12 @@ var (
 type SourceHandler func(buf []byte, id int64, total int64) error
 
 type Options struct {
-	Index  string
-	Type   string
-	Query  elastic.Query
-	Scroll string
-	Size   int64
+	Index         string
+	Type          string
+	Query         elastic.Query
+	Scroll        string
+	BatchByteSize int64
+	NoMappingType bool
 }
 
 type Exporter interface {
@@ -37,6 +38,7 @@ type exporter struct {
 
 	scrollID string
 
+	size   int64
 	cursor int64
 }
 
@@ -57,22 +59,72 @@ func (e *exporter) deleteScrollID() (err error) {
 	return
 }
 
+func (e *exporter) buildSearchPath() string {
+	if e.NoMappingType {
+		return "/" + e.Index + "/_search"
+	} else {
+		return "/" + e.Index + "/" + e.Type + "/_search"
+	}
+}
+
+func (e *exporter) buildQuery() (q interface{}, err error) {
+	if e.Query != nil {
+		if q, err = e.Query.Source(); err != nil {
+			return
+		}
+	}
+	return
+}
+
+func (e *exporter) estimateBatchSize(ctx context.Context) (err error) {
+	var query interface{}
+	if query, err = e.buildQuery(); err != nil {
+		return
+	}
+	var res *elastic.Response
+	if res, err = e.client.PerformRequest(ctx, elastic.PerformRequestOptions{
+		Method: http.MethodPost,
+		Path:   e.buildSearchPath(),
+		Body: map[string]interface{}{
+			"size":  "500",
+			"query": query,
+			// optimization, see https://www.elastic.co/guide/en/elasticsearch/reference/6.3/search-request-scroll.html
+			"sort": []string{"_doc"},
+		},
+	}); err != nil {
+		return
+	}
+	if len(res.Body) == 0 {
+		err = errors.New("failed to estimate batch size: empty response")
+		return
+	}
+	estByteSize := len(res.Body) / 500
+	if estByteSize == 0 {
+		estByteSize = 512
+	}
+	e.size = e.BatchByteSize / int64(estByteSize)
+	if e.size < 10 {
+		e.size = 10
+	} else if e.size > 10000 {
+		e.size = 10000
+	}
+	return
+}
+
 func (e *exporter) do(ctx context.Context) (err error) {
 	var res *elastic.Response
 	if e.scrollID == "" {
-		var querySrc interface{}
-		if e.Query != nil {
-			if querySrc, err = e.Query.Source(); err != nil {
-				return
-			}
+		var query interface{}
+		if query, err = e.buildQuery(); err != nil {
+			return
 		}
 		if res, err = e.client.PerformRequest(ctx, elastic.PerformRequestOptions{
 			Method: http.MethodPost,
-			Path:   "/" + e.Index + "/" + e.Type + "/_search",
+			Path:   e.buildSearchPath(),
 			Params: url.Values{"scroll": []string{e.Scroll}},
 			Body: map[string]interface{}{
-				"size":  e.Size,
-				"query": querySrc,
+				"size":  e.size,
+				"query": query,
 				// optimization, see https://www.elastic.co/guide/en/elasticsearch/reference/6.3/search-request-scroll.html
 				"sort": []string{"_doc"},
 			},
@@ -173,6 +225,9 @@ func (e *exporter) do(ctx context.Context) (err error) {
 
 func (e *exporter) Do(ctx context.Context) (err error) {
 	defer e.deleteScrollID()
+	if err = e.estimateBatchSize(ctx); err != nil {
+		return
+	}
 	for {
 		if err = e.do(ctx); err != nil {
 			if err == ErrUserCancelled || err == io.EOF {
@@ -190,8 +245,8 @@ func New(client *elastic.Client, opts Options, handler SourceHandler) Exporter {
 	if opts.Scroll == "" {
 		opts.Scroll = "1m"
 	}
-	if opts.Size == 0 {
-		opts.Size = 5000
+	if opts.BatchByteSize <= 0 {
+		opts.BatchByteSize = 10 * 1024 * 1024
 	}
 	if handler == nil {
 		handler = func(buf []byte, idx int64, total int64) error { return nil }
