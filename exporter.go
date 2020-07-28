@@ -67,9 +67,14 @@ func (e *exporter) buildSearchPath() string {
 	}
 }
 
-func (e *exporter) buildQuery() (q interface{}, err error) {
+func (e *exporter) buildSearchBody(size interface{}) (b map[string]interface{}, err error) {
+	b = map[string]interface{}{
+		"size": size,
+		// optimization, see https://www.elastic.co/guide/en/elasticsearch/reference/6.3/search-request-scroll.html
+		"sort": []string{"_doc"},
+	}
 	if e.Query != nil {
-		if q, err = e.Query.Source(); err != nil {
+		if b["query"], err = e.Query.Source(); err != nil {
 			return
 		}
 	}
@@ -77,20 +82,16 @@ func (e *exporter) buildQuery() (q interface{}, err error) {
 }
 
 func (e *exporter) estimateBatchSize(ctx context.Context) (err error) {
-	var query interface{}
-	if query, err = e.buildQuery(); err != nil {
+	const Sample = 512
+	var body interface{}
+	if body, err = e.buildSearchBody(Sample); err != nil {
 		return
 	}
 	var res *elastic.Response
 	if res, err = e.client.PerformRequest(ctx, elastic.PerformRequestOptions{
 		Method: http.MethodPost,
 		Path:   e.buildSearchPath(),
-		Body: map[string]interface{}{
-			"size":  "500",
-			"query": query,
-			// optimization, see https://www.elastic.co/guide/en/elasticsearch/reference/6.3/search-request-scroll.html
-			"sort": []string{"_doc"},
-		},
+		Body:   body,
 	}); err != nil {
 		return
 	}
@@ -98,7 +99,7 @@ func (e *exporter) estimateBatchSize(ctx context.Context) (err error) {
 		err = errors.New("failed to estimate batch size: empty response")
 		return
 	}
-	estByteSize := len(res.Body) / 500
+	estByteSize := len(res.Body) / Sample
 	if estByteSize == 0 {
 		estByteSize = 512
 	}
@@ -114,20 +115,15 @@ func (e *exporter) estimateBatchSize(ctx context.Context) (err error) {
 func (e *exporter) do(ctx context.Context) (err error) {
 	var res *elastic.Response
 	if e.scrollID == "" {
-		var query interface{}
-		if query, err = e.buildQuery(); err != nil {
+		var body interface{}
+		if body, err = e.buildSearchBody(e.size); err != nil {
 			return
 		}
 		if res, err = e.client.PerformRequest(ctx, elastic.PerformRequestOptions{
 			Method: http.MethodPost,
 			Path:   e.buildSearchPath(),
 			Params: url.Values{"scroll": []string{e.Scroll}},
-			Body: map[string]interface{}{
-				"size":  e.size,
-				"query": query,
-				// optimization, see https://www.elastic.co/guide/en/elasticsearch/reference/6.3/search-request-scroll.html
-				"sort": []string{"_doc"},
-			},
+			Body:   body,
 		}); err != nil {
 			return
 		}
