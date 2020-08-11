@@ -23,6 +23,7 @@ type Options struct {
 	Query         elastic.Query
 	Scroll        string
 	BatchByteSize int64
+	BatchSize     int64
 	NoMappingType bool
 }
 
@@ -82,6 +83,10 @@ func (e *exporter) buildSearchBody(size interface{}) (b map[string]interface{}, 
 }
 
 func (e *exporter) estimateBatchSize(ctx context.Context) (err error) {
+	if e.BatchSize > 0 {
+		e.size = e.BatchSize
+		return
+	}
 	const Sample = 512
 	var body interface{}
 	if body, err = e.buildSearchBody(Sample); err != nil {
